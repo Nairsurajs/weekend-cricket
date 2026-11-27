@@ -177,6 +177,14 @@ textarea{min-height:76px;resize:vertical}
 .fldpick{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .fldpick button{min-height:40px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--key);font-weight:600;font-size:14px}
 .fldpick button.on{background:var(--g1);color:#fff;border-color:var(--g1)}
+/* saved team chips */
+.sqchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 6px}
+.sqchips span{font-size:12px;color:var(--mute);margin-right:2px}
+.sqchips button{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--g2);color:var(--g2);background:transparent;font-size:13px;font-weight:700}
+.sqchips button.on{background:var(--g1);border-color:var(--g1);color:#fff}
+.sqchips button:disabled{opacity:.35}
+:root[data-theme=dark] .sqchips button:not(.on){color:#7fc9a2;border-color:#7fc9a2}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .sqchips button:not(.on){color:#7fc9a2;border-color:#7fc9a2}}
 /* captain row */
 .caprow{display:flex;gap:6px;align-items:center;margin-top:6px}
 .caprow .pn{flex:none;width:24px;text-align:right;font:600 16px "Barlow Condensed",sans-serif;color:var(--mute)}
@@ -272,14 +280,22 @@ function shareModal(){
 }
 async function loadTeams(){try{const t=await api('teams');TEAMS=t;try{localStorage.setItem('weekend-cricket-v1-teams',JSON.stringify(t))}catch(e){}squadHints();fillTeamList()}catch(e){}}
 function pushTeams(list){list=list.map(t=>({name:t.name,players:(t.players||[]).filter(n=>!/^Player \d+$/.test(n))})).filter(t=>t.players.length);
-  if(!list.length)return;for(const t of list){const k=TEAMS.findIndex(x=>x.name.toLowerCase()===t.name.toLowerCase());if(k<0)TEAMS.unshift(t);else TEAMS[k]=t}
+  if(!list.length)return;for(const t of list){const k=TEAMS.findIndex(x=>x.name.toLowerCase()===t.name.toLowerCase());if(k>=0)TEAMS.splice(k,1);TEAMS.unshift(t)}
   try{localStorage.setItem('weekend-cricket-v1-teams',JSON.stringify(TEAMS))}catch(e){}
   if(PINV)api('teams',{method:'PUT',body:JSON.stringify({teams:list})}).catch(()=>{});
 }
 const findTeam=n=>TEAMS.find(t=>t.name.toLowerCase()===String(n||'').trim().toLowerCase());
 function fillTeamList(){const d=$('tlist');if(d)d.innerHTML=TEAMS.map(t=>`<option value="${esc(t.name)}"></option>`).join('')}
-function squadHints(){[['tA','plA'],['tB','plB']].forEach(([i,e])=>{const ed=$(e),inp=$(i);if(!ed||!inp)return;ed.querySelector('.loadsq')?.remove();
-  const t=findTeam(inp.value);if(t&&t.players.length)ed.querySelector('.ph').insertAdjacentHTML('beforeend',`<button type="button" class="loadsq" data-a="loadsq" data-e="${e}" data-t="${esc(t.name)}">Load ${t.players.length} saved</button>`)})}
+function squadHints(){[['tA','plA','tB'],['tB','plB','tA']].forEach(([i,e,o])=>{const ed=$(e),inp=$(i);if(!ed||!inp)return;ed.querySelector('.sqchips')?.remove();
+  const list=TEAMS.filter(t=>t.players&&t.players.length).slice(0,10);if(!list.length)return;
+  const cur=inp.value.trim().toLowerCase(),oth=($(o)?.value||'').trim().toLowerCase();
+  ed.querySelector('.ph').insertAdjacentHTML('afterend',`<div class="sqchips"><span>Saved teams</span>${list.map(t=>{const n=t.name.toLowerCase();return `<button type="button" data-a="loadsq" data-e="${e}" data-t="${esc(t.name)}" class="${n===cur?'on':''}" ${n===oth&&n!==cur?'disabled':''}>${esc(t.name)} · ${t.players.length}</button>`}).join('')}</div>`)})}
+function rememberTeams(){
+  if(!S)return;
+  const keep=k=>S.teams[k].pl.filter(n=>!/^Player \d+$/.test(n)&&!(S.cap&&S.cap[k]&&n.toLowerCase()===S.cap[k].toLowerCase()));
+  last={...last,teams:S.teams.map((t,k)=>({name:t.name,players:keep(k)})),overs:S.overs,per:S.per,maxo:S.maxo,bonus:S.bonus,tnmode:S.cap?'cap':'team'};
+  try{localStorage.setItem(K+'-setup',JSON.stringify(last))}catch(e){}
+}
 async function loadHist(){
   try{const [st,ms]=await Promise.all([api('stats'),api('matches?limit=40')]);hist={st,ms}}
   catch(e){hist={err:e.noServer?'History needs the server version of the app (the OpenShift address).':'Could not load history — check your connection and try again.'}}
@@ -578,7 +594,7 @@ function setupView(){
   if(CAPM===null)CAPM=(last.tnmode||'cap')==='cap';
   const t=last.teams||[{name:'',players:''},{name:'',players:''}];
   const chip=(f,vals)=>`<div class="chips">${vals.map(v=>`<button type="button" data-a="preset" data-f="${f}" data-v="${v}">${v}</button>`).join('')}</div>`;
-  $('app').innerHTML=topbar()+`<div id="livenow"></div>
+  $('app').innerHTML=topbar()+`${lastDone?`<section class="card mrow"><div><small>Last match</small><b>${esc(lastDone.result||'')}</b><small>${esc(lastDone.score||'')}</small></div>${lastDone.id?`<a href="?watch=${esc(lastDone.id)}">View</a>`:''}</section>`:''}<div id="livenow"></div>
   <section class="setup card">
     <h2>New match</h2><p class="lead">Fill in the basics and start scoring. Player names are optional — you can add them as they come in.</p>
     <div class="seg-l">Team names are</div>
@@ -687,7 +703,7 @@ function checkEnd(){
 function endInn(){
   const i=I();i.done=true;
   if(i.over.length){i.overs.push(i.over);i.over=[]}
-  if(S.cur===0)S.phase='break';else{S.phase='over';S.result=resultText()}
+  if(S.cur===0)S.phase='break';else{S.phase='over';S.result=resultText();S.finishedAt=Date.now();rememberTeams()}
 }
 function resultText(){
   const a=S.inns[0],b=S.inns[1];
@@ -849,7 +865,7 @@ function live(){
      <button class="primary" data-a="next">Start 2nd innings</button><div class="tools" style="grid-template-columns:1fr 1fr"><button data-a="undo" ${H.length?'':'disabled'}>↶ Undo last ball</button><button data-a="tab" data-v="card">Scorecard</button></div></section>`;
   }else{
     h+=`<section class="card panel"><h2>${esc(S.result)}</h2><p>${S.inns.map(x=>`${esc(T(x.bat).name)} ${x.runs}/${x.wk} (${ov(x.balls)})`).join(' · ')}</p>
-     <button class="primary" data-a="copy" id="cp">Copy result summary</button><div class="tools"><button data-a="undo" ${H.length?'':'disabled'}>↶ Undo</button><button data-a="tab" data-v="card">Scorecard</button><button data-a="newmatch">New match</button></div></section>`+awardsHtml(S);
+     <button class="primary" data-a="rematch">Rematch (same teams)</button><button class="ghost" data-a="copy" id="cp">Copy result summary</button><div class="tools"><button data-a="undo" ${H.length?'':'disabled'}>↶ Undo</button><button data-a="tab" data-v="card">Scorecard</button><button data-a="newmatch">New match</button></div></section>`+awardsHtml(S);
   }
   return h;
 }
@@ -897,7 +913,10 @@ document.addEventListener('click',e=>{
     case 'pinok':checkPin($('pinin').value);break;
     case 'share':if(S&&S.id)shareModal();break;
     case 'copylink':{const done=ok=>{b.textContent=ok?'Copied ✓':'Copy failed'};try{navigator.clipboard.writeText(v).then(()=>done(true),()=>done(false))}catch(err){done(false)}break}
-    case 'loadsq':{const t=findTeam(b.dataset.t),ed=$(b.dataset.e);if(t&&ed){const c=CAPM?($(b.dataset.e==='plA'?'tA':'tB').value.trim().toLowerCase()):'';const ps=t.players.filter(n=>n.toLowerCase()!==c);ed.querySelector('.plist').innerHTML=(ps.length?ps:['']).map(n=>prow(n,'',false)).join('');renum()}break}
+    case 'loadsq':{const t=findTeam(b.dataset.t),ed=$(b.dataset.e);if(t&&ed){const inp=$(b.dataset.e==='plA'?'tA':'tB');inp.value=t.name;
+      const c=CAPM?t.name.toLowerCase():'';const ps=t.players.filter(n=>n.toLowerCase()!==c);
+      ed.querySelector('.plist').innerHTML=(ps.length?ps:['']).map(n=>prow(n,'',false)).join('');inp.dispatchEvent(new Event('input',{bubbles:true}));toast(`${t.name} · ${t.players.length} players loaded`)}break}
+    case 'rematch':rememberTeams();fxClear();S=null;H=[];hide();try{localStorage.removeItem(K)}catch(e){}tab='live';render();try{window.scrollTo(0,0)}catch(e){}break;
     case 'r':hide();ball({k:'run',r:+v});break;
     case 'wd':case 'nb':case 'b':case 'lb':extraModal(a);break;
     case 'xr':hide();ball({k:b.dataset.k,r:+v});break;
@@ -927,7 +946,7 @@ document.addEventListener('click',e=>{
     case 'ret':{snap();const x=+v;i.bats[x].out='retired hurt';i.bats[x].ret=true;if(i.s===x)i.s=null;else i.n=null;i.pr=0;i.pb=0;hide();save();render();break}
     case 'endinn':confirmBox('End this innings now?','End innings',()=>{snap();endInn();save();if(S.phase==='over')setTimeout(()=>celebrateWin(S),50)},'Use this if the match is cut short. You can undo it.');break;
     case 'next':snap();S.cur=1;S.inns.push(newInn(S.inns[0].bowl,S.inns[0].runs+1));S.phase='play';save();render();break;
-    case 'newmatch':confirmBox('Start a new match?','New match',()=>{S=null;H=[];tab='live';save()},'The current match will be cleared.');break;
+    case 'newmatch':confirmBox('Start a new match?','New match',()=>{rememberTeams();S=null;H=[];tab='live';save()},'The current match will be cleared. Both teams stay filled in for the next one.');break;
     case 'yes':{const f=pend;pend=null;hide();f&&f();render();break}
     case 'no':pend=null;close();break;
     case 'close':close();break;
@@ -961,6 +980,13 @@ $('fx').addEventListener('click',()=>fxNext());
 window.addEventListener('online',()=>doSync());
 setInterval(()=>{if(['off','err','saving'].includes(syncSt))doSync()},30000);
 if(S&&!S.id&&!WATCH){S.id=newId();save()}
+// A finished match stays up for 20 minutes (to show the result and awards), then the app opens on a fresh setup
+let lastDone=null;try{lastDone=JSON.parse(localStorage.getItem('weekend-cricket-v1-last')||'null')}catch(e){}
+if(!WATCH&&S&&S.phase==='over'&&(!S.finishedAt||Date.now()-S.finishedAt>20*60*1000)){
+  lastDone={id:S.id,result:S.result,score:S.inns.map(x=>`${S.teams[x.bat].name} ${x.runs}/${x.wk}`).join(' · ')};
+  try{localStorage.setItem('weekend-cricket-v1-last',JSON.stringify(lastDone))}catch(e){}
+  rememberTeams();S=null;H=[];try{localStorage.removeItem(K)}catch(e){}tab='live';
+}
 render();
 if(WATCH)startWatch();else if(S)doSync();else api('healthz').catch(()=>{});
 }
