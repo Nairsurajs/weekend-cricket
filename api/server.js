@@ -5,6 +5,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { Pool } = require('pg');
 const client = require('prom-client');
+const { matchAwards } = require('./awards');
 
 const PORT = +process.env.PORT || 8080;
 const PIN = process.env.SCORER_PIN || '';
@@ -26,6 +27,15 @@ const dur = new client.Histogram({ name: 'cricket_api_http_request_duration_seco
 const dbUp = new client.Gauge({ name: 'cricket_db_up', help: '1 if the API can reach PostgreSQL' });
 const balls = new client.Counter({ name: 'cricket_match_saves_total', help: 'Match state saves received' });
 const matchesG = new client.Gauge({ name: 'cricket_matches', help: 'Matches stored, by status', labelNames: ['status'] });
+const viewersG = new client.Gauge({ name: 'cricket_live_viewers', help: 'Open live-score connections' });
+
+// ---------- live push (Server-Sent Events) ----------
+const subs = new Map(); // match id -> Set of open responses
+function broadcast(id, payload) {
+  const set = subs.get(id); if (!set) return;
+  const data = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const r of set) r.write(data);
+}
 
 // ---------- helpers ----------
 function log(level, msg, extra = {}) { console.log(JSON.stringify({ time: new Date().toISOString(), level, msg, ...extra })); }
@@ -75,7 +85,9 @@ async function migrate() {
 function summary(id, st, status, updated) {
   const t = (st.teams || []).map(x => x.name);
   const inns = (st.inns || []).map(i => ({ team: (st.teams[i.bat] || {}).name, runs: i.runs, wk: i.wk, balls: i.balls }));
-  return { id, status, updated_at: updated, teams: t, overs: st.overs, innings: inns, result: st.result || '' };
+  let mom = null;
+  if (status === 'finished') { try { const a = matchAwards(st); mom = a && a.mom ? { name: a.mom.name, team: a.mom.team, line: a.mom.line } : null; } catch { /* old data */ } }
+  return { id, status, updated_at: updated, teams: t, overs: st.overs, innings: inns, result: st.result || '', mom };
 }
 function computeStats(rows) {
   const P = new Map(), Tm = new Map();
@@ -85,8 +97,10 @@ function computeStats(rows) {
     return P.get(k);
   };
   const tm = name => { const k = key(name); if (!Tm.has(k)) Tm.set(k, { name: clean(name), played: 0, won: 0, lost: 0, tied: 0 }); return Tm.get(k); };
+  const momCount = new Map();
   for (const { id, state: st } of rows) {
     if (!st || !Array.isArray(st.inns) || st.inns.length < 2) continue;
+    try { const a = matchAwards(st); if (a && a.mom && !/^player \d+$/.test(key(a.mom.name))) { const k = key(a.mom.name); const c = momCount.get(k) || { name: a.mom.name, team: a.mom.team, awards: 0 }; c.awards++; momCount.set(k, c); } } catch { /* skip */ }
     for (const i of st.inns) {
       const batTeam = (st.teams[i.bat] || {}).name, bowlTeam = (st.teams[i.bowl] || {}).name;
       for (const b of i.bats || []) {
@@ -115,6 +129,7 @@ function computeStats(rows) {
     topRuns: players.filter(p => p.batting.inns).sort((x, y) => y.batting.runs - x.batting.runs || (y.batting.sr || 0) - (x.batting.sr || 0)).slice(0, 10),
     topWickets: players.filter(p => p.bowling.balls).sort((x, y) => y.bowling.wkts - x.bowling.wkts || (x.bowling.econ ?? 99) - (y.bowling.econ ?? 99)).slice(0, 10),
     topSixes: players.filter(p => p.batting.sixes).sort((x, y) => y.batting.sixes - x.batting.sixes).slice(0, 5),
+    topMom: [...momCount.values()].sort((x, y) => y.awards - x.awards).slice(0, 5),
     teams: [...Tm.values()].sort((x, y) => y.won - x.won || x.lost - y.lost),
     players,
   };
@@ -134,6 +149,25 @@ on('GET', '/api/matches', false, async (req, m, url) => {
   const r = await pool.query('SELECT id, state, status, updated_at FROM matches ORDER BY updated_at DESC LIMIT $1', [limit]);
   return [200, r.rows.map(x => summary(x.id, x.state, x.status, x.updated_at))];
 });
+// Matches being scored right now (updated in the last 12 hours)
+on('GET', '/api/live', false, async () => {
+  const r = await pool.query("SELECT id, state, status, updated_at FROM matches WHERE status = 'play' AND updated_at > now() - interval '12 hours' ORDER BY updated_at DESC LIMIT 10");
+  return [200, r.rows.map(x => summary(x.id, x.state, x.status, x.updated_at))];
+});
+// Live score stream: sends the match now, then every change the moment the scorer saves it
+on('GET', '/api/matches/([A-Za-z0-9]{4,16})/events', false, async (req, m, url, res) => {
+  const id = m[1];
+  const r = await pool.query('SELECT state, status, updated_at FROM matches WHERE id=$1', [id]);
+  if (!r.rows.length) return [404, { error: 'Match not found' }];
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.write('retry: 2000\n\n');
+  res.write(`data: ${JSON.stringify({ id, status: r.rows[0].status, updated_at: r.rows[0].updated_at, state: r.rows[0].state })}\n\n`);
+  if (!subs.has(id)) subs.set(id, new Set());
+  subs.get(id).add(res); viewersG.inc();
+  const hb = setInterval(() => res.write(': ping\n\n'), 15000); // keeps the router connection open
+  req.on('close', () => { clearInterval(hb); const s = subs.get(id); if (s) { s.delete(res); if (!s.size) subs.delete(id); } viewersG.dec(); });
+  return null; // response stays open
+});
 on('GET', '/api/matches/([A-Za-z0-9]{4,16})', false, async (req, m) => {
   const r = await pool.query('SELECT state, status, updated_at FROM matches WHERE id=$1', [m[1]]);
   if (!r.rows.length) return [404, { error: 'Match not found' }];
@@ -147,6 +181,7 @@ on('PUT', '/api/matches/([A-Za-z0-9]{4,16})', true, async (req, m) => {
   await pool.query(`INSERT INTO matches (id, state, status) VALUES ($1, $2, $3)
     ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, status = EXCLUDED.status, updated_at = now()`, [m[1], st, status]);
   balls.inc();
+  broadcast(m[1], { id: m[1], status, updated_at: new Date().toISOString(), state: st });
   return [200, { ok: true, id: m[1], status }];
 });
 on('DELETE', '/api/matches/([A-Za-z0-9]{4,16})', true, async (req, m) => {
@@ -219,7 +254,9 @@ const server = http.createServer(async (req, res) => {
     if (!r) { const any = routes.some(r => r.re.test(url.pathname)); code = any ? 405 : 404; return send(res, code, { error: any ? 'Method not allowed' : 'Not found' }); }
     route = r.pattern;
     if (r.needPin && !pinOk(req)) { code = PIN ? 401 : 503; return send(res, code, { error: PIN ? 'Wrong or missing scorer PIN' : 'Server has no scorer PIN configured' }); }
-    const [c, body, h] = await r.fn(req, url.pathname.match(r.re), url);
+    const out = await r.fn(req, url.pathname.match(r.re), url, res);
+    if (!out) { code = 200; return; } // streaming response
+    const [c, body, h] = out;
     code = c; send(res, c, body, h);
   } catch (e) {
     code = e.status || 500;
@@ -250,7 +287,7 @@ async function start() {
   await probeDb(); setInterval(probeDb, 15000).unref();
   server.listen(PORT, () => log('info', 'listening', { port: PORT, pin: PIN ? 'set' : 'MISSING (read-only)' }));
 }
-process.on('SIGTERM', () => { log('info', 'shutting down'); server.close(() => pool.end().then(() => process.exit(0))); setTimeout(() => process.exit(0), 8000).unref(); });
+process.on('SIGTERM', () => { log('info', 'shutting down'); for (const set of subs.values()) for (const r of set) r.end(); server.close(() => pool.end().then(() => process.exit(0))); setTimeout(() => process.exit(0), 8000).unref(); });
 
 if (require.main === module) start();
 module.exports = { computeStats, server, pool, start };

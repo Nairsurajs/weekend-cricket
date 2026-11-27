@@ -1,5 +1,5 @@
 // Offline support: keeps the app working at grounds with no signal.
-const CACHE = 'cricket-scorer-v4';
+const CACHE = 'cricket-scorer-v5';
 const CORE = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png',
   './icons/apple-touch-icon.png', './icons/favicon-48.png'];
