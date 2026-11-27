@@ -185,6 +185,7 @@ a.share{display:inline-grid;place-items:center;text-decoration:none}
 .livebadge.done{color:var(--mute)}.livebadge.done::before{background:var(--mute);animation:none}
 a.homebtn{display:grid;place-items:center;text-decoration:none}
 /* saved team chips */
+.sublab{font-size:13px;font-weight:600;color:var(--mute);margin-top:8px}
 .sqchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 6px}
 .sqchips span{font-size:12px;color:var(--mute);margin-right:2px}
 .sqchips button{min-height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--g2);color:var(--g2);background:transparent;font-size:13px;font-weight:700}
@@ -286,16 +287,27 @@ function shareModal(){
    <button class="ghost" data-a="close">Close</button>`,'share');
 }
 async function loadTeams(){try{const t=await api('teams');TEAMS=t;try{localStorage.setItem('weekend-cricket-v1-teams',JSON.stringify(t))}catch(e){}squadHints();fillTeamList()}catch(e){}}
-function pushTeams(list){list=list.map(t=>({name:t.name,players:(t.players||[]).filter(n=>!/^Player \d+$/.test(n))})).filter(t=>t.players.length);
+function pushTeams(list){list=list.map(t=>({name:t.name,captain:t.captain||'',players:(t.players||[]).filter(n=>!/^Player \d+$/.test(n))})).filter(t=>t.players.length);
   if(!list.length)return;for(const t of list){const k=TEAMS.findIndex(x=>x.name.toLowerCase()===t.name.toLowerCase());if(k>=0)TEAMS.splice(k,1);TEAMS.unshift(t)}
   try{localStorage.setItem('weekend-cricket-v1-teams',JSON.stringify(TEAMS))}catch(e){}
   if(PINV)api('teams',{method:'PUT',body:JSON.stringify({teams:list})}).catch(()=>{});
 }
 const findTeam=n=>TEAMS.find(t=>t.name.toLowerCase()===String(n||'').trim().toLowerCase());
+// older saved teams had no captain field: then the captain was the team name and player 1
+const capOfTeam=t=>t.captain||(t.players&&t.players[0]&&t.players[0].toLowerCase()===t.name.toLowerCase()?t.name:'');
+const teamLabel=k=>(($(k?'tB':'tA')?.value||'').trim())||(($(k?'cB':'cA')?.value||'').trim())||('Team '+(k+1));
+function loadTeamInto(t,k){
+  const ed=$(k?'plB':'plA');if(!t||!ed)return;
+  const cap=capOfTeam(t);$(k?'tB':'tA').value=t.name;$(k?'cB':'cA').value=cap;
+  const ps=t.players.filter(n=>n.toLowerCase()!==cap.toLowerCase());
+  ed.querySelector('.plist').innerHTML=(ps.length?ps:['']).map(n=>prow(n,'',false)).join('');
+  setupChanged();toast(`${t.name} · ${t.players.length} players loaded`);
+}
+function setupChanged(){squadHints();syncCaptains();[0,1].forEach(k=>{const b=$('bf'+k);if(b)b.textContent=teamLabel(k)})}
 function fillTeamList(){const d=$('tlist');if(d)d.innerHTML=TEAMS.map(t=>`<option value="${esc(t.name)}"></option>`).join('')}
 function squadHints(){[['tA','plA','tB'],['tB','plB','tA']].forEach(([i,e,o])=>{const ed=$(e),inp=$(i);if(!ed||!inp)return;ed.querySelector('.sqchips')?.remove();
   const list=TEAMS.filter(t=>t.players&&t.players.length).slice(0,10);if(!list.length)return;
-  const cur=inp.value.trim().toLowerCase(),oth=($(o)?.value||'').trim().toLowerCase();
+  const cur=teamLabel(i==='tB'?1:0).toLowerCase(),oth=teamLabel(i==='tB'?0:1).toLowerCase();
   ed.querySelector('.ph').insertAdjacentHTML('afterend',`<div class="sqchips"><span>Saved teams</span>${list.map(t=>{const n=t.name.toLowerCase();return `<button type="button" data-a="loadsq" data-e="${e}" data-t="${esc(t.name)}" class="${n===cur?'on':''}" ${n===oth&&n!==cur?'disabled':''}>${esc(t.name)} · ${t.players.length}</button>`}).join('')}</div>`)})}
 function abandonOnServer(st){
   if(!st||!st.id||st.phase==='over'||!PINV)return;
@@ -306,7 +318,7 @@ function abandonOnServer(st){
 function rememberTeams(){
   if(!S)return;
   const keep=k=>S.teams[k].pl.filter(n=>!/^Player \d+$/.test(n)&&!(S.cap&&S.cap[k]&&n.toLowerCase()===S.cap[k].toLowerCase()));
-  last={...last,teams:S.teams.map((t,k)=>({name:t.name,players:keep(k)})),overs:S.overs,per:S.per,maxo:S.maxo,bonus:S.bonus,tnmode:S.cap?'cap':'team'};
+  last={...last,teams:S.teams.map((t,k)=>({name:t.name,captain:S.cap&&S.cap[k]||'',players:keep(k)})),overs:S.overs,per:S.per,maxo:S.maxo,bonus:S.bonus};
   try{localStorage.setItem(K+'-setup',JSON.stringify(last))}catch(e){}
 }
 async function loadHist(){
@@ -609,16 +621,20 @@ const newInn=(bat,target)=>({bat,bowl:1-bat,runs:0,wk:0,balls:0,ex:{wd:0,nb:0,b:
 
 /* ---------- setup ---------- */
 function setupView(){
-  if(CAPM===null)CAPM=(last.tnmode||'cap')==='cap';
+  CAPM=true;
+  // older saved setups stored the captain as the team name
+  (last.teams||[]).forEach(x=>{if(x&&x.captain===undefined&&last.tnmode!=='team'){x.captain=x.name}});
   const t=last.teams||[{name:'',players:''},{name:'',players:''}];
   const chip=(f,vals)=>`<div class="chips">${vals.map(v=>`<button type="button" data-a="preset" data-f="${f}" data-v="${v}">${v}</button>`).join('')}</div>`;
   $('app').innerHTML=topbar()+`${lastDone?`<section class="card mrow"><div><small>Last match</small><b>${esc(lastDone.result||'')}</b><small>${esc(lastDone.score||'')}</small></div>${lastDone.id?`<a href="?watch=${esc(lastDone.id)}">View</a>`:''}</section>`:''}<div id="livenow"></div>
   <section class="setup card">
     <h2>New match</h2><p class="lead">Fill in the basics and start scoring. Player names are optional — you can add them as they come in.</p>
-    <div class="seg-l">Team names are</div>
-    <div class="seg" id="tnmode"><button type="button" data-a="tnm" data-v="cap" class="${CAPM?'on':''}">Captain's name</button><button type="button" data-a="tnm" data-v="team" class="${CAPM?'':'on'}">Team name</button></div>
-    <div class="two"><div><label for="tA" id="labA">${CAPM?'Team 1 captain':'Team 1'}</label><input id="tA" list="tlist" autocomplete="off" value="${esc(t[0].name)}" placeholder="${CAPM?'e.g. Suraj':'Team A'}"></div>
-    <div><label for="tB" id="labB">${CAPM?'Team 2 captain':'Team 2'}</label><input id="tB" list="tlist" autocomplete="off" value="${esc(t[1].name)}" placeholder="${CAPM?'e.g. Amit':'Team B'}"></div></div><datalist id="tlist"></datalist>
+    <div class="two">
+      <div><label for="cA">Team 1 captain</label><input id="cA" autocomplete="off" value="${esc(t[0].captain||'')}" placeholder="e.g. Suraj">
+        <label for="tA" class="sublab">Team name <span class="hint">— optional</span></label><input id="tA" list="tlist" autocomplete="off" value="${esc(t[0].name&&t[0].name!==t[0].captain?t[0].name:'')}" placeholder="e.g. Suraj k Baadshah"></div>
+      <div><label for="cB">Team 2 captain</label><input id="cB" autocomplete="off" value="${esc(t[1].captain||'')}" placeholder="e.g. Amit">
+        <label for="tB" class="sublab">Team name <span class="hint">— optional</span></label><input id="tB" list="tlist" autocomplete="off" value="${esc(t[1].name&&t[1].name!==t[1].captain?t[1].name:'')}" placeholder="e.g. Amit Ke Sher"></div>
+    </div><datalist id="tlist"></datalist>
     <label for="ovs">Overs per innings</label><input id="ovs" type="number" inputmode="numeric" min="1" value="${last.overs||15}">${chip('ovs',[5,6,8,10,12,15,20])}
     <label for="per">Players per side</label><input id="per" type="number" inputmode="numeric" min="2" value="${last.per||11}">${chip('per',[6,7,8,11])}
     <label for="maxo">Max overs per bowler <span class="hint">— leave blank for no limit</span></label><input id="maxo" type="number" inputmode="numeric" min="1" value="${last.maxo===undefined?3:(last.maxo||'')}">
@@ -628,10 +644,10 @@ function setupView(){
     <div class="seg-l">Memes & commentary language</div>
     <div class="seg" id="lang">${LANGS.map(([v,l])=>`<button type="button" data-a="tog" data-v="${v}" class="${LANGPREF===v?'on':''}">${l}</button>`).join('')}</div>
     <div class="seg-l">Who bats first?</div>
-    <div class="seg" id="bf"><button type="button" class="on" data-a="bf" data-v="0" id="bf0">${esc(t[0].name||'Team 1')}</button><button type="button" data-a="bf" data-v="1" id="bf1">${esc(t[1].name||'Team 2')}</button></div>
-    <div class="seg-l" style="margin-top:16px">Players <span class="hint">— optional. ${CAPM?'The captain is already player 1 — just add the rest. ':''}You can also add names during the match. Tip: paste a WhatsApp list into any box.</span></div>
-    ${plEditor('plA',t[0].name||'Team 1',toList(t[0].players),false)}
-    ${plEditor('plB',t[1].name||'Team 2',toList(t[1].players),false)}
+    <div class="seg" id="bf"><button type="button" class="on" data-a="bf" data-v="0" id="bf0">${esc(t[0].name||t[0].captain||'Team 1')}</button><button type="button" data-a="bf" data-v="1" id="bf1">${esc(t[1].name||t[1].captain||'Team 2')}</button></div>
+    <div class="seg-l" style="margin-top:16px">Players <span class="hint">— optional. The captain is already player 1, just add the rest. You can also add names during the match. Tip: paste a WhatsApp list into any box.</span></div>
+    ${plEditor('plA',t[0].name||t[0].captain||'Team 1',toList(t[0].players),false)}
+    ${plEditor('plB',t[1].name||t[1].captain||'Team 2',toList(t[1].players),false)}
     <label for="spin">Scorer PIN <span class="hint">— saves the match to the server so others can follow live. Leave blank to keep it on this phone.</span></label>
     <input id="spin" type="password" inputmode="numeric" autocomplete="off" value="${esc(PINV)}">
     <button class="primary" data-a="start">Start match</button>
@@ -652,26 +668,26 @@ function plEditor(id,name,names,edit,usedFn){
   return `<div class="pteam" id="${id}"><div class="ph"><b class="tn">${esc(name)}</b><span class="cnt"></span></div>${cap}<div class="plist">${rows}</div><button type="button" class="addp" data-a="addp">+ Add player</button></div>`;
 }
 function capHasName(t){const c=t.querySelector('.caprow');return c&&!c.hidden&&c.querySelector('.capn').textContent.trim()?1:0}
-function syncCaptains(){[['tA','plA','Team 1'],['tB','plB','Team 2']].forEach(([i,e,d])=>{const ed=$(e),v=$(i)?.value.trim();if(!ed)return;ed.querySelector('.tn').textContent=v||d;const c=ed.querySelector('.caprow');if(c){c.hidden=!CAPM||!v;c.querySelector('.capn').textContent=v}});renum()}
+function syncCaptains(){[['cA','plA',0],['cB','plB',1]].forEach(([i,e,k])=>{const ed=$(e),v=($(i)?.value||'').trim();if(!ed)return;ed.querySelector('.tn').textContent=teamLabel(k);const c=ed.querySelector('.caprow');if(c){c.hidden=!v;c.querySelector('.capn').textContent=v}});renum()}
 function renum(){document.querySelectorAll('.pteam').forEach(t=>{const off=capHasName(t),r=t.querySelectorAll('.prow');r.forEach((x,k)=>x.querySelector('.pn').textContent=k+1+off);const cn=off?t.querySelector('.capn').textContent.trim().toLowerCase():'';const n=new Set([...t.querySelectorAll('.pin')].map(x=>x.value.trim().toLowerCase()).filter(x=>x&&x!==cn)).size+off;t.querySelector('.cnt').textContent=pl(n,'player')})}
 function readPl(id){const seen=new Set();return [...document.querySelectorAll('#'+id+' .pin')].map(x=>({o:x.dataset.o,n:x.value.trim()})).filter(x=>x.n&&!seen.has(x.n)&&seen.add(x.n))}
 function addRow(team,val='',focus=true){const l=team.querySelector('.plist');l.insertAdjacentHTML('beforeend',prow(val,'',false));renum();const inp=l.lastElementChild.querySelector('input');if(focus)inp.focus();return inp}
 function start(){
-  const nA=$('tA').value.trim()||'Team A',nB=$('tB').value.trim()||'Team B';
+  const capA=$('cA').value.trim(),capB=$('cB').value.trim();
+  const nA=$('tA').value.trim()||capA||'Team A',nB=$('tB').value.trim()||capB||'Team B';
   const overs=Math.max(1,parseInt($('ovs').value)||10),per=Math.max(2,parseInt($('per').value)||11),maxo=Math.max(0,parseInt($('maxo').value)||0);
   const bf=+(document.querySelector('#bf .on')?.dataset.v||0);
   const bonus=maxo>0&&document.querySelector('#bon .on')?.dataset.v==='1';
-  const capA=CAPM?$('tA').value.trim():'',capB=CAPM?$('tB').value.trim():'';
   const withCap=(c,l)=>c?[c,...l.filter(x=>x.toLowerCase()!==c.toLowerCase())]:l;
   const rawA=readPl('plA').map(x=>x.n),rawB=readPl('plB').map(x=>x.n);
   const lA=withCap(capA,rawA),lB=withCap(capB,rawB);
   const mk=(a,c)=>a.length>(c?1:0)?a:[...a,...Array.from({length:Math.max(0,per-a.length)},(_,k)=>'Player '+(a.length+k+1))];
-  last={teams:[{name:nA,players:withCap(capA,rawA).filter(x=>x!==capA)},{name:nB,players:withCap(capB,rawB).filter(x=>x!==capB)}],overs,per,maxo,bonus,tnmode:CAPM?'cap':'team'};
+  last={teams:[{name:nA,captain:capA,players:withCap(capA,rawA).filter(x=>x!==capA)},{name:nB,captain:capB,players:withCap(capB,rawB).filter(x=>x!==capB)}],overs,per,maxo,bonus};
   try{localStorage.setItem(K+'-setup',JSON.stringify(last))}catch(e){}
-  S={id:newId(),created:new Date().toISOString(),cap:CAPM?[capA,capB]:null,teams:[{name:nA,pl:mk(lA,capA)},{name:nB,pl:mk(lB,capB)}],overs,per,maxo,bonus,cur:0,phase:'play',inns:[newInn(bf,null)],result:''};
+  S={id:newId(),created:new Date().toISOString(),cap:capA||capB?[capA,capB]:null,teams:[{name:nA,pl:mk(lA,capA)},{name:nB,pl:mk(lB,capB)}],overs,per,maxo,bonus,cur:0,phase:'play',inns:[newInn(bf,null)],result:''};
   S.lang=document.querySelector('#lang .on')?.dataset.v||'en';LANGPREF=S.lang;try{localStorage.setItem('weekend-cricket-v1-lang',S.lang)}catch(e){}
   PINV=($('spin')?.value||'').trim();try{localStorage.setItem('weekend-cricket-v1-pin',PINV)}catch(e){}
-  pushTeams([{name:nA,players:lA},{name:nB,players:lB}]);
+  pushTeams([{name:nA,captain:capA,players:lA},{name:nB,captain:capB,players:lB}]);
   H=[];tab='live';save();render();
 }
 
@@ -828,7 +844,7 @@ function savePlayers(){
     const list=rows.map(r=>r.n);used.forEach(u=>{const side=S.inns.some(i=>(i.bat===k&&i.bats.some(b=>b.n===u))||(i.bowl===k&&i.bowls.some(b=>b.n===u)));if(side&&!list.includes(u))list.push(u)});
     S.teams[k].pl=list;
   });
-  pushTeams(S.teams.map(t=>({name:t.name,players:t.pl})));
+  pushTeams(S.teams.map((t,k)=>({name:t.name,captain:S.cap&&S.cap[k]||'',players:t.pl})));
   save();close();
 }
 function moreModal(){
@@ -926,9 +942,6 @@ document.addEventListener('click',e=>{
   const a=b.dataset.a,v=b.dataset.v,i=S&&S.inns?I():null;
   switch(a){
     case 'preset':$(b.dataset.f).value=v;if(b.dataset.f==='ovs')quotaFor(+v);bonHint();break;
-    case 'tnm':{CAPM=v==='cap';b.parentElement.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));
-      $('labA').textContent=CAPM?'Team 1 captain':'Team 1';$('labB').textContent=CAPM?'Team 2 captain':'Team 2';
-      $('tA').placeholder=CAPM?'e.g. Suraj':'Team A';$('tB').placeholder=CAPM?'e.g. Amit':'Team B';syncCaptains();break}
     case 'bf':case 'tog':b.parentElement.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x===b));bonHint();break;
     case 'start':start();break;
     case 'tab':tab=v;if(v==='hist')hist=null;hide();render();break;
@@ -939,9 +952,7 @@ document.addEventListener('click',e=>{
     case 'pinok':checkPin($('pinin').value);break;
     case 'share':if(S&&S.id)shareModal();break;
     case 'copylink':{const done=ok=>{b.textContent=ok?'Copied ✓':'Copy failed'};try{navigator.clipboard.writeText(v).then(()=>done(true),()=>done(false))}catch(err){done(false)}break}
-    case 'loadsq':{const t=findTeam(b.dataset.t),ed=$(b.dataset.e);if(t&&ed){const inp=$(b.dataset.e==='plA'?'tA':'tB');inp.value=t.name;
-      const c=CAPM?t.name.toLowerCase():'';const ps=t.players.filter(n=>n.toLowerCase()!==c);
-      ed.querySelector('.plist').innerHTML=(ps.length?ps:['']).map(n=>prow(n,'',false)).join('');inp.dispatchEvent(new Event('input',{bubbles:true}));toast(`${t.name} · ${t.players.length} players loaded`)}break}
+    case 'loadsq':loadTeamInto(findTeam(b.dataset.t),b.dataset.e==='plA'?0:1);break
     case 'rematch':rememberTeams();fxClear();S=null;H=[];hide();try{localStorage.removeItem(K)}catch(e){}tab='live';render();try{window.scrollTo(0,0)}catch(e){}break;
     case 'r':hide();ball({k:'run',r:+v});break;
     case 'wd':case 'nb':case 'b':case 'lb':extraModal(a);break;
@@ -981,7 +992,12 @@ document.addEventListener('click',e=>{
   }
 });
 document.addEventListener('change',e=>{if(e.target.id==='restorefile'&&e.target.files[0])restore(e.target.files[0])});
-document.addEventListener('input',e=>{if(e.target.id==='tA'||e.target.id==='tB')squadHints();if(e.target.classList.contains('pin'))renum();if(e.target.id==='tA'||e.target.id==='tB')syncCaptains();if(e.target.id==='ovs')quotaFor(+e.target.value);if(e.target.id==='ovs'||e.target.id==='maxo')bonHint();if(e.target.id==='tA'&&$('bf0'))$('bf0').textContent=e.target.value||'Team 1';if(e.target.id==='tB'&&$('bf1'))$('bf1').textContent=e.target.value||'Team 2'});
+document.addEventListener('input',e=>{const id=e.target.id;
+  if(id==='tA'||id==='tB'){const k=id==='tB'?1:0,t=findTeam(e.target.value),ed=$(k?'plB':'plA');
+    // picking a saved team from the list fills captain + squad straight away (only into an empty list)
+    if(t&&ed&&![...ed.querySelectorAll('.pin')].some(x=>x.value.trim())&&!($(k?'cB':'cA').value.trim()))loadTeamInto(t,k);else setupChanged()}
+  if(id==='cA'||id==='cB')setupChanged();
+  if(e.target.classList.contains('pin'))renum();if(e.target.id==='ovs')quotaFor(+e.target.value);if(e.target.id==='ovs'||e.target.id==='maxo')bonHint();});
 document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.classList.contains('pin')){e.preventDefault();const r=e.target.closest('.prow'),nx=r.nextElementSibling;if(nx)nx.querySelector('input').focus();else if(e.target.value.trim())addRow(r.closest('.pteam'));return}if(e.key==='Enter'&&e.target.id==='nn'){e.preventDefault();pick(e.target.value)}if(e.key==='Escape'&&M&&M!=='p')close()});
 document.addEventListener('paste',e=>{const t=e.target;if(!t.classList||!t.classList.contains('pin'))return;const txt=(e.clipboardData||window.clipboardData)?.getData('text')||'';
   const names=txt.split(/[\n,;]/).map(x=>x.replace(/^\s*\d+[.)-]?\s*/,'').trim()).filter(Boolean);if(names.length<2)return;e.preventDefault();

@@ -78,7 +78,8 @@ async function migrate() {
       name text NOT NULL,
       players jsonb NOT NULL DEFAULT '[]',
       updated_at timestamptz NOT NULL DEFAULT now()
-    );`);
+    );
+    ALTER TABLE teams ADD COLUMN IF NOT EXISTS captain text NOT NULL DEFAULT '';`);
 }
 
 // ---------- summaries & stats ----------
@@ -190,7 +191,7 @@ on('DELETE', '/api/matches/([A-Za-z0-9]{4,16})', true, async (req, m) => {
 });
 
 on('GET', '/api/teams', false, async () => {
-  const r = await pool.query('SELECT name, players, updated_at FROM teams ORDER BY updated_at DESC');
+  const r = await pool.query('SELECT name, captain, players, updated_at FROM teams ORDER BY updated_at DESC');
   return [200, r.rows];
 });
 on('PUT', '/api/teams', true, async req => {
@@ -199,8 +200,8 @@ on('PUT', '/api/teams', true, async req => {
   for (const t of list) {
     const name = clean(t.name); if (!name) continue;
     const players = [...new Set((Array.isArray(t.players) ? t.players : []).map(clean).filter(Boolean))].slice(0, 60);
-    await pool.query(`INSERT INTO teams (key, name, players) VALUES ($1, $2, $3)
-      ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, players = EXCLUDED.players, updated_at = now()`, [key(name), name, JSON.stringify(players)]);
+    await pool.query(`INSERT INTO teams (key, name, captain, players) VALUES ($1, $2, $3, $4)
+      ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, captain = EXCLUDED.captain, players = EXCLUDED.players, updated_at = now()`, [key(name), name, clean(t.captain), JSON.stringify(players)]);
   }
   return [200, { ok: true, saved: list.length }];
 });
@@ -212,7 +213,7 @@ on('GET', '/api/stats', false, async () => {
 
 on('GET', '/api/export', false, async () => {
   const m = await pool.query('SELECT id, state, status, created_at, updated_at FROM matches ORDER BY created_at');
-  const t = await pool.query('SELECT name, players FROM teams ORDER BY name');
+  const t = await pool.query('SELECT name, captain, players FROM teams ORDER BY name');
   return [200, { app: 'weekend-cricket', version: 1, exported_at: new Date().toISOString(), matches: m.rows, teams: t.rows },
     { 'Content-Disposition': `attachment; filename="cricket-backup-${new Date().toISOString().slice(0, 10)}.json"` }];
 });
@@ -231,8 +232,8 @@ on('POST', '/api/import', true, async req => {
     }
     for (const t of body.teams || []) {
       const name = clean(t.name); if (!name) continue;
-      await c.query(`INSERT INTO teams (key, name, players) VALUES ($1,$2,$3) ON CONFLICT (key) DO UPDATE SET name=EXCLUDED.name, players=EXCLUDED.players, updated_at=now()`,
-        [key(name), name, JSON.stringify((t.players || []).map(clean).filter(Boolean))]);
+      await c.query(`INSERT INTO teams (key, name, captain, players) VALUES ($1,$2,$3,$4) ON CONFLICT (key) DO UPDATE SET name=EXCLUDED.name, captain=EXCLUDED.captain, players=EXCLUDED.players, updated_at=now()`,
+        [key(name), name, clean(t.captain), JSON.stringify((t.players || []).map(clean).filter(Boolean))]);
     }
     await c.query('COMMIT');
   } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
