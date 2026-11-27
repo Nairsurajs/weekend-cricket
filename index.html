@@ -178,6 +178,9 @@ textarea{min-height:76px;resize:vertical}
 .fldpick button{min-height:40px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--key);font-weight:600;font-size:14px}
 .fldpick button.on{background:var(--g1);color:#fff;border-color:var(--g1)}
 /* viewer navigation */
+.tag.off{background:var(--mute)}
+.mact{display:flex;gap:6px;align-items:center}
+.mdel{min-height:40px;padding:0 12px;border-radius:10px;border:1px solid var(--line);color:var(--ball);font-weight:600;background:transparent}
 a.share{display:inline-grid;place-items:center;text-decoration:none}
 .livebadge.done{color:var(--mute)}.livebadge.done::before{background:var(--mute);animation:none}
 a.homebtn{display:grid;place-items:center;text-decoration:none}
@@ -294,6 +297,12 @@ function squadHints(){[['tA','plA','tB'],['tB','plB','tA']].forEach(([i,e,o])=>{
   const list=TEAMS.filter(t=>t.players&&t.players.length).slice(0,10);if(!list.length)return;
   const cur=inp.value.trim().toLowerCase(),oth=($(o)?.value||'').trim().toLowerCase();
   ed.querySelector('.ph').insertAdjacentHTML('afterend',`<div class="sqchips"><span>Saved teams</span>${list.map(t=>{const n=t.name.toLowerCase();return `<button type="button" data-a="loadsq" data-e="${e}" data-t="${esc(t.name)}" class="${n===cur?'on':''}" ${n===oth&&n!==cur?'disabled':''}>${esc(t.name)} · ${t.players.length}</button>`}).join('')}</div>`)})}
+function abandonOnServer(st){
+  if(!st||!st.id||st.phase==='over'||!PINV)return;
+  const bowled=(st.inns||[]).some(i=>i.balls||(i.over&&i.over.length)||(i.overs&&i.overs.length));
+  if(!bowled)api('matches/'+st.id,{method:'DELETE'}).catch(()=>{});
+  else api('matches/'+st.id,{method:'PUT',body:JSON.stringify({state:{...st,phase:'abandoned',result:'Match abandoned'}})}).catch(()=>{});
+}
 function rememberTeams(){
   if(!S)return;
   const keep=k=>S.teams[k].pl.filter(n=>!/^Player \d+$/.test(n)&&!(S.cap&&S.cap[k]&&n.toLowerCase()===S.cap[k].toLowerCase()));
@@ -312,7 +321,7 @@ function histView(){
   const runs=st.topRuns.map(p=>`<tr><td><b>${esc(p.name)}</b><span class="how">${esc(p.team)}</span></td><td>${p.matches}</td><td><b>${p.batting.runs}</b></td><td>${esc(p.batting.highest)}</td><td>${p.batting.sr??'–'}</td><td>${p.batting.fours}</td><td>${p.batting.sixes}</td></tr>`).join('');
   const wk=st.topWickets.map(p=>`<tr><td><b>${esc(p.name)}</b><span class="how">${esc(p.team)}</span></td><td>${esc(p.bowling.overs)}</td><td><b>${p.bowling.wkts}</b></td><td>${esc(p.bowling.best)}</td><td>${p.bowling.econ??'–'}</td><td>${p.bowling.wides}/${p.bowling.noballs}</td></tr>`).join('');
   const tm=st.teams.map(t=>`<tr><td><b>${esc(t.name)}</b></td><td>${t.played}</td><td>${t.won}</td><td>${t.lost}</td><td>${t.tied}</td></tr>`).join('');
-  const list=ms.map(m=>`<div class="mrow"><div><b>${esc(m.teams.join(' v '))}</b>${m.status==='play'?'<span class="tag">LIVE</span>':''}<small>${d(m.updated_at)} · ${m.innings.map(x=>`${esc(x.team)} ${x.runs}/${x.wk}`).join(' · ')}</small><small>${esc(m.result||'In progress')}</small>${m.mom?`<small>Man of the Match: <b>${esc(m.mom.name)}</b> · ${esc(m.mom.line)}</small>`:''}</div><a href="?watch=${esc(m.id)}">View</a></div>`).join('');
+  const list=ms.map(m=>`<div class="mrow"><div><b>${esc(m.teams.join(' v '))}</b>${m.status==='play'&&Date.now()-new Date(m.updated_at)<3600e3?'<span class="tag">LIVE</span>':m.status==='abandoned'?'<span class="tag off">ABANDONED</span>':''}<small>${d(m.updated_at)} · ${m.innings.map(x=>`${esc(x.team)} ${x.runs}/${x.wk}`).join(' · ')}</small><small>${esc(m.status==='abandoned'?'Match abandoned':m.result||(Date.now()-new Date(m.updated_at)<3600e3?'In progress':'Not finished'))}</small>${m.mom?`<small>Man of the Match: <b>${esc(m.mom.name)}</b> · ${esc(m.mom.line)}</small>`:''}</div><div class="mact"><a href="?watch=${esc(m.id)}">View</a>${PINV?`<button class="mdel" data-a="delm" data-v="${esc(m.id)}" aria-label="Delete match">Delete</button>`:''}</div></div>`).join('');
   const mom=(st.topMom||[]).map(p=>`<tr><td><b>${esc(p.name)}</b><span class="how">${esc(p.team)}</span></td><td><b>${p.awards}</b></td></tr>`).join('');
   return `<section class="card sc"><h3>Top run-scorers</h3><div class="tot">${pl(st.matches,'finished match')} this season</div>
      ${runs?`<div class="scroll"><table><thead><tr><th>Player</th><th>M</th><th>R</th><th>HS</th><th>SR</th><th>4s</th><th>6s</th></tr></thead><tbody>${runs}</tbody></table></div>`:'<p class="empty">No finished matches yet.</p>'}</section>
@@ -552,9 +561,10 @@ function awardsHtml(st){
     ${fun.length?`<div class="fun"><div class="k">${t.fun.toUpperCase()}</div>${fun.map(f=>`<div class="funrow"><span>${f[0]}</span><b>${esc(f[1])}</b>${f[2]?`<small>${esc(f[2])}</small>`:''}</div>`).join('')}</div>`:''}</section>`;
 }
 
-let watchTimer=null;
+let watchTimer=null,watchUpd=null;
+const stale=()=>!!watchUpd&&Date.now()-watchUpd>60*60*1000;
 function applyLive(d){
-  const prev=S;S=d.state;watchAt=new Date();watchErr='';
+  const prev=S;S=d.state;watchAt=new Date();watchErr='';watchUpd=d.updated_at?new Date(d.updated_at).getTime():Date.now();
   if(!M||M==='p')render();
   if(prev){
     if(S.last&&(!prev.last||S.last.seq>prev.last.seq))celebrate(S.last);
@@ -832,7 +842,7 @@ function moreModal(){
 /* ---------- views ---------- */
 function topbar(){
   const t=[[S||WATCH?'Live':'New match','live'],...(S?[['Scorecard','card']]:[]),['History','hist']];
-  const right=WATCH?`<span class="livebadge${S&&S.phase==='over'?' done':''}">${S&&S.phase==='over'?'FINISHED':'LIVE'}</span><a class="share" href="${location.pathname}">All matches</a>`:(S?syncBadge()+`<button class="share" id="sharebtn" data-a="share" ${serverSeen?'':'hidden'}>Share</button>`:'');
+  const right=WATCH?`<span class="livebadge${S&&(S.phase==='over'||S.phase==='abandoned'||stale())?' done':''}">${!S?'LIVE':S.phase==='over'?'FINISHED':S.phase==='abandoned'?'ABANDONED':stale()?'NOT LIVE':'LIVE'}</span><a class="share" href="${location.pathname}">All matches</a>`:(S?syncBadge()+`<button class="share" id="sharebtn" data-a="share" ${serverSeen?'':'hidden'}>Share</button>`:'');
   return `<div class="top"><h1>Weekend Cricket</h1>${instP&&!WATCH?'<button class="inst" data-a="install">Install</button>':''}${right}<div class="tabs">${t.map(([l,v])=>`<button class="${tab===v?'on':''}" data-a="tab" data-v="${v}">${l}</button>`).join('')}</div></div>`;
 }
 function chips(o){return o.map(b=>`<span class="chip ${b.c}">${esc(b.l)}</span>`).join('')}
@@ -858,6 +868,10 @@ function live(){
   if(WATCH){
     h+=`<p class="watchnote" id="wnote"><span id="wtxt">${esc(watchErr||(watchAt?'Updated '+watchAt.toLocaleTimeString():''))}</span><button class="fxtog" data-a="fxtog">Animations: ${FXON?'on':'off'}</button></p>`;
     if(S.phase==='break'){const a=S.inns[0];h+=`<section class="card panel"><h2>Innings break</h2><p>${esc(T(a.bowl).name)} need ${a.runs+1} to win from ${S.overs} overs.</p></section>`}
+    else if(S.phase==='abandoned'||(S.phase!=='over'&&stale())){
+      h+=`<section class="card panel"><h2>${S.phase==='abandoned'?'Match abandoned':'No updates for a while'}</h2><p>${S.phase==='abandoned'?'The scorer stopped this match.':'The scorer hasn’t saved a ball in over an hour.'}</p><a class="primary homebtn" href="${location.pathname}">All matches</a></section><div id="livenow">${liveHtml()}</div>`;
+      if(liveCache===null)setTimeout(liveNow,0);
+    }
     else if(S.phase==='over'){
       h+=`<section class="card panel"><h2>${esc(S.result)}</h2><p>${S.inns.map(x=>`${esc(T(x.bat).name)} ${x.runs}/${x.wk} (${ov(x.balls)})`).join(' · ')}</p><a class="primary homebtn" href="${location.pathname}">All matches</a></section>`+awardsHtml(S)+`<div id="livenow">${liveHtml()}</div>`;
       if(liveCache===null)setTimeout(liveNow,0);
@@ -919,6 +933,7 @@ document.addEventListener('click',e=>{
     case 'start':start();break;
     case 'tab':tab=v;if(v==='hist')hist=null;hide();render();break;
     case 'histre':hist=null;render();break;
+    case 'delm':{const id=v;confirmBox('Delete this match?','Delete',async()=>{try{await api('matches/'+id,{method:'DELETE'});toast('Match deleted')}catch(e){toast(e.status===401?'Wrong scorer PIN':'Could not delete')}hist=null;render()},'It disappears from history and season stats. This can’t be undone.');break}
     case 'restore':$('restorefile').click();break;
     case 'pinset':pinModal();break;
     case 'pinok':checkPin($('pinin').value);break;
@@ -957,7 +972,7 @@ document.addEventListener('click',e=>{
     case 'ret':{snap();const x=+v;i.bats[x].out='retired hurt';i.bats[x].ret=true;if(i.s===x)i.s=null;else i.n=null;i.pr=0;i.pb=0;hide();save();render();break}
     case 'endinn':confirmBox('End this innings now?','End innings',()=>{snap();endInn();save();if(S.phase==='over')setTimeout(()=>celebrateWin(S),50)},'Use this if the match is cut short. You can undo it.');break;
     case 'next':snap();S.cur=1;S.inns.push(newInn(S.inns[0].bowl,S.inns[0].runs+1));S.phase='play';save();render();break;
-    case 'newmatch':confirmBox('Start a new match?','New match',()=>{rememberTeams();S=null;H=[];tab='live';save()},'The current match will be cleared. Both teams stay filled in for the next one.');break;
+    case 'newmatch':confirmBox('Start a new match?','New match',()=>{rememberTeams();abandonOnServer(S);S=null;H=[];tab='live';save()},S&&S.phase!=='over'?'This match isn’t finished — it will be marked abandoned. Both teams stay filled in for the next one.':'Both teams stay filled in for the next one.');break;
     case 'yes':{const f=pend;pend=null;hide();f&&f();render();break}
     case 'no':pend=null;close();break;
     case 'close':close();break;
@@ -989,7 +1004,7 @@ document.addEventListener('click',keepAwake);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){keepAwake();if(WATCH)pollWatch()}});
 $('fx').addEventListener('click',()=>fxNext());
 window.addEventListener('online',()=>doSync());
-setInterval(()=>{if(WATCH&&S&&S.phase==='over'&&document.visibilityState!=='hidden')liveNow()},30000);
+setInterval(()=>{if(WATCH&&S&&(S.phase==='over'||S.phase==='abandoned'||stale())&&document.visibilityState!=='hidden')liveNow()},30000);
 setInterval(()=>{if(['off','err','saving'].includes(syncSt))doSync()},30000);
 if(S&&!S.id&&!WATCH){S.id=newId();save()}
 // A finished match stays up for 20 minutes (to show the result and awards), then the app opens on a fresh setup

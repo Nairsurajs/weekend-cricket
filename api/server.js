@@ -149,9 +149,9 @@ on('GET', '/api/matches', false, async (req, m, url) => {
   const r = await pool.query('SELECT id, state, status, updated_at FROM matches ORDER BY updated_at DESC LIMIT $1', [limit]);
   return [200, r.rows.map(x => summary(x.id, x.state, x.status, x.updated_at))];
 });
-// Matches being scored right now (updated in the last 12 hours)
+// Matches being scored right now (in play and updated within the last 60 minutes)
 on('GET', '/api/live', false, async () => {
-  const r = await pool.query("SELECT id, state, status, updated_at FROM matches WHERE status = 'play' AND updated_at > now() - interval '12 hours' ORDER BY updated_at DESC LIMIT 10");
+  const r = await pool.query("SELECT id, state, status, updated_at FROM matches WHERE status = 'play' AND updated_at > now() - interval '60 minutes' ORDER BY updated_at DESC LIMIT 10");
   return [200, r.rows.map(x => summary(x.id, x.state, x.status, x.updated_at))];
 });
 // Live score stream: sends the match now, then every change the moment the scorer saves it
@@ -177,7 +177,7 @@ on('PUT', '/api/matches/([A-Za-z0-9]{4,16})', true, async (req, m) => {
   const body = await readJson(req);
   const st = body.state;
   if (!st || typeof st !== 'object' || !Array.isArray(st.inns) || !Array.isArray(st.teams)) return [400, { error: 'state must be a match object' }];
-  const status = st.phase === 'over' ? 'finished' : 'play';
+  const status = st.phase === 'over' ? 'finished' : st.phase === 'abandoned' ? 'abandoned' : 'play';
   await pool.query(`INSERT INTO matches (id, state, status) VALUES ($1, $2, $3)
     ON CONFLICT (id) DO UPDATE SET state = EXCLUDED.state, status = EXCLUDED.status, updated_at = now()`, [m[1], st, status]);
   balls.inc();
