@@ -177,6 +177,10 @@ textarea{min-height:76px;resize:vertical}
 .fldpick{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
 .fldpick button{min-height:40px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--key);font-weight:600;font-size:14px}
 .fldpick button.on{background:var(--g1);color:#fff;border-color:var(--g1)}
+/* viewer navigation */
+a.share{display:inline-grid;place-items:center;text-decoration:none}
+.livebadge.done{color:var(--mute)}.livebadge.done::before{background:var(--mute);animation:none}
+a.homebtn{display:grid;place-items:center;text-decoration:none}
 /* saved team chips */
 .sqchips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 6px}
 .sqchips span{font-size:12px;color:var(--mute);margin-right:2px}
@@ -576,11 +580,15 @@ async function pollWatch(){
   }
   watchTimer=setTimeout(pollWatch,esOk?20000:(S&&S.phase==='over'?60000:3000));
 }
+let liveCache=null;
+function liveHtml(){
+  const ls=(liveCache||[]).filter(m=>m.id!==WATCH);
+  if(!ls.length)return WATCH&&liveCache?'<section class="card"><p class="empty">No other match is live right now. This list updates by itself.</p></section>':'';
+  return `<section class="card sc"><h3>${WATCH?'Watch another match':'Live now'}</h3>${ls.map(m=>`<div class="mrow"><div><b>${esc(m.teams.join(' v '))}</b><span class="tag">LIVE</span><small>${m.innings.map(x=>`${esc(x.team)} ${x.runs}/${x.wk} (${ov(x.balls)})`).join(' · ')}</small></div><a href="?watch=${esc(m.id)}">Watch</a></div>`).join('')}</section>`;
+}
 async function liveNow(){
-  const el=$('livenow');if(!el)return;
-  try{const ls=await api('live');if(!ls.length)return;
-    el.innerHTML=`<section class="card sc"><h3>Live now</h3>${ls.map(m=>`<div class="mrow"><div><b>${esc(m.teams.join(' v '))}</b><span class="tag">LIVE</span><small>${m.innings.map(x=>`${esc(x.team)} ${x.runs}/${x.wk} (${ov(x.balls)})`).join(' · ')}</small></div><a href="?watch=${esc(m.id)}">Watch</a></div>`).join('')}</section>`;
-  }catch(e){}
+  try{liveCache=await api('live')}catch(e){if(!liveCache)liveCache=[]}
+  const el=$('livenow');if(el)el.innerHTML=liveHtml();
 }
 const I=()=>S.inns[S.cur];
 const T=i=>S.teams[i];
@@ -824,7 +832,7 @@ function moreModal(){
 /* ---------- views ---------- */
 function topbar(){
   const t=[[S||WATCH?'Live':'New match','live'],...(S?[['Scorecard','card']]:[]),['History','hist']];
-  const right=WATCH?`<span class="livebadge">LIVE</span>`:(S?syncBadge()+`<button class="share" id="sharebtn" data-a="share" ${serverSeen?'':'hidden'}>Share</button>`:'');
+  const right=WATCH?`<span class="livebadge${S&&S.phase==='over'?' done':''}">${S&&S.phase==='over'?'FINISHED':'LIVE'}</span><a class="share" href="${location.pathname}">All matches</a>`:(S?syncBadge()+`<button class="share" id="sharebtn" data-a="share" ${serverSeen?'':'hidden'}>Share</button>`:'');
   return `<div class="top"><h1>Weekend Cricket</h1>${instP&&!WATCH?'<button class="inst" data-a="install">Install</button>':''}${right}<div class="tabs">${t.map(([l,v])=>`<button class="${tab===v?'on':''}" data-a="tab" data-v="${v}">${l}</button>`).join('')}</div></div>`;
 }
 function chips(o){return o.map(b=>`<span class="chip ${b.c}">${esc(b.l)}</span>`).join('')}
@@ -850,7 +858,10 @@ function live(){
   if(WATCH){
     h+=`<p class="watchnote" id="wnote"><span id="wtxt">${esc(watchErr||(watchAt?'Updated '+watchAt.toLocaleTimeString():''))}</span><button class="fxtog" data-a="fxtog">Animations: ${FXON?'on':'off'}</button></p>`;
     if(S.phase==='break'){const a=S.inns[0];h+=`<section class="card panel"><h2>Innings break</h2><p>${esc(T(a.bowl).name)} need ${a.runs+1} to win from ${S.overs} overs.</p></section>`}
-    else if(S.phase==='over')h+=`<section class="card panel"><h2>${esc(S.result)}</h2><p>${S.inns.map(x=>`${esc(T(x.bat).name)} ${x.runs}/${x.wk} (${ov(x.balls)})`).join(' · ')}</p></section>`+awardsHtml(S);
+    else if(S.phase==='over'){
+      h+=`<section class="card panel"><h2>${esc(S.result)}</h2><p>${S.inns.map(x=>`${esc(T(x.bat).name)} ${x.runs}/${x.wk} (${ov(x.balls)})`).join(' · ')}</p><a class="primary homebtn" href="${location.pathname}">All matches</a></section>`+awardsHtml(S)+`<div id="livenow">${liveHtml()}</div>`;
+      if(liveCache===null)setTimeout(liveNow,0);
+    }
     return h;
   }
   if(S.phase==='play'){
@@ -978,6 +989,7 @@ document.addEventListener('click',keepAwake);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){keepAwake();if(WATCH)pollWatch()}});
 $('fx').addEventListener('click',()=>fxNext());
 window.addEventListener('online',()=>doSync());
+setInterval(()=>{if(WATCH&&S&&S.phase==='over'&&document.visibilityState!=='hidden')liveNow()},30000);
 setInterval(()=>{if(['off','err','saving'].includes(syncSt))doSync()},30000);
 if(S&&!S.id&&!WATCH){S.id=newId();save()}
 // A finished match stays up for 20 minutes (to show the result and awards), then the app opens on a fresh setup
