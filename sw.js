@@ -1,5 +1,5 @@
 // Offline support: keeps the app working at grounds with no signal.
-const CACHE = 'cricket-scorer-v3';
+const CACHE = 'cricket-scorer-v4';
 const CORE = ['./', './index.html', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png',
   './icons/apple-touch-icon.png', './icons/favicon-48.png'];
@@ -18,6 +18,9 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+
+  // Live data from the API always comes from the network, never the cache.
+  if (url.origin === location.origin && url.pathname.startsWith('/api/')) return;
 
   // The app page: try the network for updates, fall back to the saved copy offline.
   if (req.mode === 'navigate') {

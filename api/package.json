@@ -1,0 +1,17 @@
+{
+  "name": "weekend-cricket-api",
+  "version": "1.0.0",
+  "description": "API for the Weekend Cricket Scorer: matches, rosters, stats, live scores",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.13.0",
+    "prom-client": "^15.1.0"
+  }
+}

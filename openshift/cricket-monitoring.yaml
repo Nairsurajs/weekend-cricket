@@ -1,0 +1,55 @@
+# Weekend Cricket — metrics scraping + alert rules (OpenShift user-workload monitoring).
+# Apply in the console: + → Import YAML → paste → Create.
+# If the sandbox refuses these kinds, the app still works; you keep the built-in
+# CPU / memory / network dashboards under Observe.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api
+  labels: {app: api, app.kubernetes.io/part-of: weekend-cricket}
+spec:
+  selector:
+    matchLabels: {app: api}
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cricket-alerts
+  labels: {app.kubernetes.io/part-of: weekend-cricket}
+spec:
+  groups:
+  - name: weekend-cricket
+    rules:
+    - alert: CricketApiDown
+      expr: sum(up{job="api"}) == 0 or absent(up{job="api"})
+      for: 2m
+      labels: {severity: critical}
+      annotations:
+        summary: Cricket API is down
+        description: No API pod has answered a metrics scrape for 2 minutes. Scores are only being kept on phones.
+    - alert: CricketDatabaseDown
+      expr: max(cricket_db_up) == 0
+      for: 2m
+      labels: {severity: critical}
+      annotations:
+        summary: Cricket database is unreachable
+        description: The API cannot reach PostgreSQL. Check the postgresql pod and its volume.
+    - alert: CricketApiErrors
+      expr: sum(rate(cricket_api_http_requests_total{code=~"5.."}[5m])) > 0.1
+      for: 5m
+      labels: {severity: warning}
+      annotations:
+        summary: Cricket API is returning errors
+        description: More than 1 server error every 10 seconds over the last 5 minutes. Check the api pod logs.
+    - alert: CricketAppDown
+      expr: max(kube_deployment_status_replicas_available{deployment="cricket"}) < 1
+      for: 2m
+      labels: {severity: critical}
+      annotations:
+        summary: Cricket web app has no running pod
+        description: The cricket Deployment has 0 available replicas.

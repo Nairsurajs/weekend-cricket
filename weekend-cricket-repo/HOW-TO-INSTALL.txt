@@ -1,0 +1,29 @@
+WEEKEND CRICKET SCORER - HOW TO INSTALL ON YOUR PHONE
+=====================================================
+
+STEP 1 - Put the app online (one time only, about 2 minutes, free)
+  1. On your computer, unzip this file. You get a folder called "cricket-app".
+  2. Open https://app.netlify.com/drop in your browser.
+  3. Drag the whole "cricket-app" folder onto the page.
+  4. Sign up for a free Netlify account when asked and claim the site.
+     If you don't claim it, the site is deleted after a short time.
+  5. Netlify gives you a web address, like https://something.netlify.app
+     In the site settings you can rename it, e.g. https://weekend-cricket.netlify.app
+
+STEP 2 - Install it on your phone
+  ANDROID (Chrome):
+    Open your web address in Chrome. Tap the red "Install" button at the top of the app,
+    or tap the menu (three dots) and choose "Install app" / "Add to Home screen".
+  iPHONE (Safari):
+    Open your web address in Safari. Tap the Share button, then "Add to Home Screen".
+
+  The cricket-ball icon appears on your home screen. It opens full screen like a normal app.
+
+GOOD TO KNOW
+  - Bowling quota: set a max overs per bowler and whether one bowler can bowl one extra over.
+    Picking 15 overs fills in your rule for you: one bowler can bowl 4, everyone else max 3.
+  - Works offline. Open it once with internet after installing, and it works at grounds with no signal.
+  - The screen stays awake while you score, and the phone gives a short buzz on each ball.
+  - Your match saves automatically on the phone. If the app closes, it picks up where you left off.
+  - Teammates can install it from the same web address to score their own games.
+  - To update the app later, drag the new folder onto your site in Netlify. Phones pick up the new version the next time they open it with internet.
